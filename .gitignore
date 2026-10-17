@@ -3,3 +3,7 @@
 
 # SSH key pair and known hosts of the local dev environment.
 /infra/dev/data/ssh
+
+# BMAD personal settings (user name, chat language, skill level).
+/_bmad/config.user.toml
+/_bmad/custom/config.user.toml

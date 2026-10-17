@@ -1,0 +1,7 @@
+# Gitleaks configuration: the default rules, plus project-specific allowlists.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "BMAD installer manifest: SHA-256 checksums of the installed files, regenerated on every install."
+paths = ['''^_bmad/_config/files-manifest\.csv$''']
