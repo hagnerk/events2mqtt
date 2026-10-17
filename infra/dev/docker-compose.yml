@@ -1,11 +1,11 @@
-name: event2mqtt-dev
+name: events2mqtt-dev
 
 services:
   claude:
-    container_name: event2mqtt-dev-claude
-    hostname: event2mqtt-claude
+    container_name: events2mqtt-dev-claude
+    hostname: events2mqtt-claude
     build: ./docker/claude
-    image: event2mqtt-dev-claude
+    image: events2mqtt-dev-claude
     volumes:
       - ../..:/workspace
       - claude-home:/root
@@ -20,13 +20,13 @@ services:
       start_period: 30s
       start_interval: 1s
     networks:
-      - event2mqtt-dev-network
+      - events2mqtt-dev-network
 
   mosquitto:
     build: ./docker/mosquitto
-    image: event2mqtt-dev-mosquitto
-    container_name: event2mqtt-dev-mosquitto
-    hostname: event2mqtt-mosquitto
+    image: events2mqtt-dev-mosquitto
+    container_name: events2mqtt-dev-mosquitto
+    hostname: events2mqtt-mosquitto
     depends_on:
       claude:
         condition: service_healthy
@@ -37,13 +37,13 @@ services:
     ports:
       - "1883:1883"
     networks:
-      - event2mqtt-dev-network
+      - events2mqtt-dev-network
 
   go:
     build: ./docker/go
-    image: event2mqtt-dev-go
-    container_name: event2mqtt-dev-go
-    hostname: event2mqtt-go
+    image: events2mqtt-dev-go
+    container_name: events2mqtt-dev-go
+    hostname: events2mqtt-go
     depends_on:
       claude:
         condition: service_healthy
@@ -54,10 +54,10 @@ services:
       - go-path:/go
       - go-build-cache:/root/.cache/go-build
     networks:
-      - event2mqtt-dev-network
+      - events2mqtt-dev-network
 
 networks:
-  event2mqtt-dev-network:
+  events2mqtt-dev-network:
     driver: bridge
 
 volumes:
