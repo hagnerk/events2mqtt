@@ -1,0 +1,5 @@
+# Claude state: credentials, history, sessions and caches.
+/infra/dev/data/claude
+
+# SSH key pair and known hosts of the local dev environment.
+/infra/dev/data/ssh

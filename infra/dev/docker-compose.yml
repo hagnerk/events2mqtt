@@ -1,0 +1,56 @@
+name: event2mqtt-dev
+
+services:
+  claude:
+    container_name: event2mqtt-dev-claude
+    hostname: event2mqtt-claude
+    build: ./docker/claude
+    image: event2mqtt-dev-claude
+    volumes:
+      - ../..:/workspace
+      - claude-home:/root
+      - ./data/claude:/root/.claude
+      - ./data/ssh:/root/.ssh
+      - ${HOME}/.claude/skills:/root/.claude/skills
+    working_dir: /workspace
+    networks:
+      - event2mqtt-dev-network
+
+  mosquitto:
+    build: ./docker/mosquitto
+    image: event2mqtt-dev-mosquitto
+    container_name: event2mqtt-dev-mosquitto
+    hostname: event2mqtt-mosquitto
+    volumes:
+      - ./data/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./data/ssh/id_rsa.pub:/tmp/claude_id_rsa.pub:ro
+      - mosquitto-ssh:/etc/ssh
+    ports:
+      - "1883:1883"
+    networks:
+      - event2mqtt-dev-network
+
+  go:
+    build: ./docker/go
+    image: event2mqtt-dev-go
+    container_name: event2mqtt-dev-go
+    hostname: event2mqtt-go
+    volumes:
+      - ../..:/workspace
+      - ./data/ssh/id_rsa.pub:/tmp/claude_id_rsa.pub:ro
+      - go-ssh:/etc/ssh
+      - go-path:/go
+      - go-build-cache:/root/.cache/go-build
+    networks:
+      - event2mqtt-dev-network
+
+networks:
+  event2mqtt-dev-network:
+    driver: bridge
+
+volumes:
+  claude-home:
+  mosquitto-ssh:
+  go-ssh:
+  go-path:
+  go-build-cache:
