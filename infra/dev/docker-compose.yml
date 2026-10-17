@@ -13,6 +13,12 @@ services:
       - ./data/ssh:/root/.ssh
       - ${HOME}/.claude/skills:/root/.claude/skills
     working_dir: /workspace
+    healthcheck:
+      # Healthy once the entrypoint has generated the SSH key pair.
+      test: ["CMD", "test", "-f", "/root/.ssh/id_rsa.pub"]
+      interval: 30s
+      start_period: 30s
+      start_interval: 1s
     networks:
       - event2mqtt-dev-network
 
@@ -21,6 +27,9 @@ services:
     image: event2mqtt-dev-mosquitto
     container_name: event2mqtt-dev-mosquitto
     hostname: event2mqtt-mosquitto
+    depends_on:
+      claude:
+        condition: service_healthy
     volumes:
       - ./data/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./data/ssh/id_rsa.pub:/tmp/claude_id_rsa.pub:ro
@@ -35,6 +44,9 @@ services:
     image: event2mqtt-dev-go
     container_name: event2mqtt-dev-go
     hostname: event2mqtt-go
+    depends_on:
+      claude:
+        condition: service_healthy
     volumes:
       - ../..:/workspace
       - ./data/ssh/id_rsa.pub:/tmp/claude_id_rsa.pub:ro
