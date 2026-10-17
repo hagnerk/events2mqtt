@@ -1,0 +1,36 @@
+#!/bin/sh
+# Refuses a push if any of the pushed commits contains a file under a protected path.
+# The whole tree of each commit is checked, so a file committed with --no-verify
+# then deleted in a later commit is still caught.
+. "$(dirname "$0")/protected-paths"
+
+remote="$1"
+zero=0000000000000000000000000000000000000000
+status=0
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+    # Branch deletion: nothing is published.
+    [ "$local_sha" = "$zero" ] && continue
+
+    if [ "$remote_sha" = "$zero" ]; then
+        # New branch on the remote: check the commits it does not have yet.
+        commits=$(git rev-list "$local_sha" --not --remotes="$remote")
+    else
+        commits=$(git rev-list "$remote_sha..$local_sha")
+    fi
+
+    for commit in $commits; do
+        # shellcheck disable=SC2086
+        files=$(git ls-tree -r --name-only "$commit" -- $PROTECTED_PATHS)
+        if [ -n "$files" ]; then
+            echo "Push refused: commit $commit on $local_ref contains protected files:" >&2
+            echo "$files" | sed 's/^/  /' >&2
+            status=1
+        fi
+    done
+done
+
+if [ "$status" -ne 0 ]; then
+    echo "Rewrite the history to remove them before pushing." >&2
+fi
+exit "$status"

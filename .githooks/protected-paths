@@ -1,0 +1,3 @@
+# Paths that must never reach the repository, sourced by the hooks of this directory.
+# They hold Claude's credentials and personal history, and the dev SSH key pair.
+PROTECTED_PATHS="infra/dev/data/claude infra/dev/data/ssh"

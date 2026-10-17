@@ -1,0 +1,13 @@
+#!/bin/sh
+# Refuses a commit that adds or modifies a file under a protected path,
+# including files forced in with "git add -f". Deleting them stays allowed.
+. "$(dirname "$0")/protected-paths"
+
+# shellcheck disable=SC2086
+staged=$(git diff --cached --name-only --diff-filter=d -- $PROTECTED_PATHS)
+if [ -n "$staged" ]; then
+    echo "Commit refused: these files are under a protected path and must not be versioned:" >&2
+    echo "$staged" | sed 's/^/  /' >&2
+    echo "Unstage them with: git restore --staged <file>" >&2
+    exit 1
+fi

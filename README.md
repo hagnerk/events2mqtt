@@ -2,6 +2,18 @@
 
 ## Developer setup
 
+### The Git hooks
+
+The `infra/dev/data/claude` and `infra/dev/data/ssh` directories hold Claude's credentials and personal history, and the dev SSH key pair. Besides being excluded by `.gitignore`, they are protected by two hooks stored in `.githooks`: `pre-commit` refuses a commit that adds a file under these paths, even one forced with `git add -f`, and `pre-push` refuses to push a commit whose tree contains one, which also catches a commit made with `--no-verify`. Git does not enable versioned hooks on its own, so this has to be done once after cloning:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+These hooks only protect the clones where they are enabled, and `git push --no-verify` still bypasses them.
+
+### The containers
+
 The development environment runs in Docker and is described in `infra/dev/docker-compose.yml`. It requires Docker Engine 25 or later with the Compose plugin, since the healthcheck relies on the `start_interval` option. Once Docker is available, we can start everything from the `infra/dev` directory:
 
 ```sh
