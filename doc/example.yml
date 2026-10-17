@@ -1,0 +1,291 @@
+# =============================================================================
+# example.yml - example configuration of the Events2mqtt rule engine
+#
+# Principle:
+#   - inputs  : last known value of each sensor (the state of the world)
+#   - derived : named expressions computed from inputs and the time of day
+#   - latches : stored states, changed by events (button presses)
+#   - outputs : actuators; each one has an ORDERED list of policies,
+#               the first one whose "when" is true decides, otherwise "default"
+#
+# Software settings (MQTT broker, credentials, time zone, coordinates used
+# for sunrise and sunset) come from environment variables, never from this
+# file.
+#
+# Functions available in expressions:
+#   any(a, b, ...)                true if at least one argument is true
+#   all(a, b, ...)                true if every argument is true
+#   duration("30m")               a duration
+#   since_true(x)                 0 if x is true now, otherwise the time
+#                                 elapsed since x went back to false
+#                                 (infinite if x was never seen true)
+#   since_true_any(a, b, ...)     the smallest since_true among the arguments
+#   time_between("23:00","06:00") true if local time is within the range
+#                                 (handles midnight crossing)
+#   sun_below_horizon(offset)     true if the sun is below the horizon,
+#                                 optional offset ("-30m" = 30 min before
+#                                 sunset)
+#
+# Every time-based function reports to the engine the next instant its value
+# may change, which triggers a re-evaluation at the right moment.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Inputs
+# -----------------------------------------------------------------------------
+inputs:
+
+  # Sonoff TRVZB radiator valves
+  # running_state is "heat" when the valve requests heat, "idle" otherwise
+  trv_living_room:
+    topic: zigbee2mqtt/trv_living_room
+    field: running_state
+    type: string
+    values: [heat, idle]
+  trv_bedroom:
+    topic: zigbee2mqtt/trv_bedroom
+    field: running_state
+    type: string
+    values: [heat, idle]
+  trv_office:
+    topic: zigbee2mqtt/trv_office
+    field: running_state
+    type: string
+    values: [heat, idle]
+
+  # Room temperature measured by each valve, in °C
+  trv_living_room_temp:
+    topic: zigbee2mqtt/trv_living_room
+    field: local_temperature
+    type: number
+  trv_bedroom_temp:
+    topic: zigbee2mqtt/trv_bedroom
+    field: local_temperature
+    type: number
+  trv_office_temp:
+    topic: zigbee2mqtt/trv_office
+    field: local_temperature
+    type: number
+
+  # Motion sensors (occupancy: true / false)
+  pir_kitchen:
+    topic: zigbee2mqtt/pir_kitchen
+    field: occupancy
+    type: bool
+  pir_living_room:
+    topic: zigbee2mqtt/pir_living_room
+    field: occupancy
+    type: bool
+  pir_entrance:
+    topic: zigbee2mqtt/pir_entrance
+    field: occupancy
+    type: bool
+
+  # State actually reported by the boiler relay (Sonoff ZBMINI R2)
+  boiler_relay_state:
+    topic: zigbee2mqtt/boiler_relay
+    field: state
+    type: string
+    values: [ON, OFF]
+
+# -----------------------------------------------------------------------------
+# Derived states
+# -----------------------------------------------------------------------------
+derived:
+
+  # At least one room is below the frost protection threshold
+  frost_risk: any(trv_living_room_temp < 7, trv_bedroom_temp < 7, trv_office_temp < 7)
+
+  # At least one valve requests heat
+  heat_demand: any(trv_living_room == "heat", trv_bedroom == "heat", trv_office == "heat")
+
+  # Time range during which the boiler is always off
+  cutoff_window: time_between("23:00", "06:00")
+
+  # Someone moved in the home during the last 30 minutes
+  home_presence: since_true_any(pir_kitchen, pir_living_room, pir_entrance) < duration("30m")
+
+  # It is night (from 20 min before sunset)
+  night: sun_below_horizon("-20m")
+
+  # Motion in the kitchen during the last 3 minutes
+  recent_kitchen_motion: since_true(pir_kitchen) < duration("3m")
+
+# -----------------------------------------------------------------------------
+# Latches: turn presses (events) into states
+# -----------------------------------------------------------------------------
+latches:
+
+  # Switch A: lamps 1 and 2
+  kitchen_a:
+    values: [off, on]
+    initial: off
+    reset_after: 3h          # back to off if someone forgets to switch off
+    events:
+      press:
+        topic: zigbee2mqtt/kitchen_switch_a
+        field: action
+        equals: single
+    transitions:
+      - on: press
+        from: [off]
+        to: on
+      - on: press
+        from: [on]
+        to: off
+
+  # Switch B: lamps 3 and 4
+  kitchen_b:
+    values: [off, on]
+    initial: off
+    reset_after: 3h
+    events:
+      press:
+        topic: zigbee2mqtt/kitchen_switch_b
+        field: action
+        equals: single
+    transitions:
+      - on: press
+        from: [off]
+        to: on
+      - on: press
+        from: [on]
+        to: off
+
+# -----------------------------------------------------------------------------
+# Outputs
+# -----------------------------------------------------------------------------
+outputs:
+
+  boiler:
+    topic: zigbee2mqtt/boiler_relay/set
+    observed: boiler_relay_state      # compared to the actual state, not the sent one
+    default: OFF
+    min_on: 5m                        # protection against short cycling
+    min_off: 5m
+    policies:
+      - name: frost-protection
+        when: frost_risk
+        state: ON
+      - name: night-cutoff
+        when: cutoff_window
+        state: OFF
+      - name: empty-home
+        when: not home_presence
+        state: OFF
+      - name: valve-demand
+        when: heat_demand
+        state: ON
+
+  kitchen_lamp_1:
+    topic: zigbee2mqtt/kitchen_lamp_1/set
+    default: OFF
+    policies:
+      - name: switch-a
+        when: kitchen_a == "on"
+        state: ON
+
+  kitchen_lamp_2:
+    topic: zigbee2mqtt/kitchen_lamp_2/set
+    default: OFF
+    policies:
+      - name: switch-a
+        when: kitchen_a == "on"
+        state: ON
+
+  kitchen_lamp_3:
+    topic: zigbee2mqtt/kitchen_lamp_3/set
+    default: OFF
+    policies:
+      - name: switch-b
+        when: kitchen_b == "on"
+        state: ON
+      - name: night-light
+        when: night && recent_kitchen_motion
+        state: ON
+
+  kitchen_lamp_4:
+    topic: zigbee2mqtt/kitchen_lamp_4/set
+    default: OFF
+    policies:
+      - name: switch-b
+        when: kitchen_b == "on"
+        state: ON
+
+# -----------------------------------------------------------------------------
+# Test scenarios (run by `events2mqtt test`, with a simulated clock)
+# -----------------------------------------------------------------------------
+scenarios:
+
+  - name: a valve requests heat while someone is home, night cutoff at 23:00
+    at: "2026-11-02T19:00:00"
+    given:
+      trv_living_room: heat
+      trv_bedroom: idle
+      trv_office: idle
+      pir_living_room: true     # someone is moving, presence never expires
+    expect:
+      boiler: ON
+    then:
+      - at: "2026-11-02T23:00:00"
+        expect:
+          boiler: OFF           # decided by night-cutoff
+
+  - name: home empty for 30 minutes
+    at: "2026-11-02T15:00:00"
+    given:
+      trv_living_room: heat
+      pir_living_room: { value: false, since: "2026-11-02T14:40:00" }
+    expect:
+      boiler: ON
+    then:
+      - at: "2026-11-02T15:10:00"
+        expect:
+          boiler: OFF           # decided by empty-home
+
+  - name: frost protection overrides the night cutoff and the empty home
+    at: "2026-11-02T02:00:00"
+    given:
+      trv_living_room: idle
+      trv_living_room_temp: 12
+      trv_bedroom_temp: 12
+      trv_office_temp: 12
+    expect:
+      boiler: OFF
+    then:
+      - set: { trv_office_temp: 6.5 }
+        at: "2026-11-02T02:10:00"
+        expect:
+          boiler: ON            # decided by frost-protection
+
+  - name: night light at night, off after 3 minutes
+    at: "2026-11-02T22:00:00"
+    given:
+      pir_kitchen: true
+    expect:
+      kitchen_lamp_3: ON
+      kitchen_lamp_4: OFF
+    then:
+      - set: { pir_kitchen: false }
+        at: "2026-11-02T22:01:00"
+        expect:
+          kitchen_lamp_3: ON
+      - at: "2026-11-02T22:04:00"
+        expect:
+          kitchen_lamp_3: OFF
+
+  - name: no night light during the day
+    at: "2026-11-02T11:00:00"
+    given:
+      pir_kitchen: true
+    expect:
+      kitchen_lamp_3: OFF
+
+  - name: switch B turns lamps 3 and 4 on
+    at: "2026-11-02T11:00:00"
+    events:
+      - { topic: zigbee2mqtt/kitchen_switch_b, payload: { action: single } }
+    expect:
+      kitchen_lamp_1: OFF
+      kitchen_lamp_3: ON
+      kitchen_lamp_4: ON

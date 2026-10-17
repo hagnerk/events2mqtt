@@ -1,4 +1,4 @@
-# domo - MQTT rule engine
+# Events2mqtt - MQTT rule engine
 
 Design documentation for a home automation engine driven by declarative rules, communicating exclusively over MQTT (Zigbee devices via Zigbee2MQTT), configured in YAML and fully operable from the command line.
 
@@ -61,14 +61,18 @@ The configuration is built on four concepts.
 
 ### Inputs (`inputs`)
 
-Map an MQTT topic and a message field to a typed variable.
+Map an MQTT topic and a message field to a typed variable. The type (`bool`, `number` or `string`) is declared, and a string input may list its allowed values.
 
 ```yaml
 inputs:
   trv_salon:
     topic: zigbee2mqtt/trv_salon
     field: running_state
+    type: string
+    values: [heat, idle]
 ```
+
+At startup, validation rejects a comparison with the wrong type or with an undeclared value (`trv_salon == "hot"`). At runtime, a message that does not match the declaration is ignored: the input keeps its last valid value and a warning is logged.
 
 ### Derived states (`derived`)
 
@@ -89,14 +93,22 @@ latches:
   cuisine_a:
     values: [off, on]
     initial: off
-    on:
-      - event:
-          topic: zigbee2mqtt/inter_cuisine_a
-          field: action
-          equals: single
-        action: toggle
     reset_after: 3h
+    events:
+      press:
+        topic: zigbee2mqtt/inter_cuisine_a
+        field: action
+        equals: single
+    transitions:              # evaluated in order, first match wins
+      - on: press
+        from: [off]
+        to: on
+      - on: press
+        from: [on]
+        to: off
 ```
+
+A latch always uses this single syntax: named events and an ordered list of transitions. A toggle is simply two transitions.
 
 #### Levels versus edges
 
@@ -167,7 +179,7 @@ Hardware caveat: many Zigbee buttons detect double presses themselves. They then
 
 ### Outputs (`outputs`)
 
-Each actuator declares its command topic, its default value and its ordered list of policies.
+Each actuator declares its command topic, its default value and its ordered list of policies. The engine publishes `{"state":"ON"}` or `{"state":"OFF"}`, the JSON Zigbee2MQTT expects. `state: ON` is shorthand for `{state: ON}`, so that later versions can publish objects with more fields, such as `{state: ON, brightness: 80}` for a dimmable lamp, without breaking existing configurations. Zigbee2MQTT is the device abstraction: no per-device-type logic is needed in the engine.
 
 ```yaml
 outputs:
@@ -220,11 +232,11 @@ Each time-based function reports, when evaluated, the moment its value may chang
 
 The engine keeps the nearest deadline and schedules a wake-up at that moment. Benefits: precise transitions, no needless wake-ups, and natural support for timeouts (turning a lamp off 3 minutes after the last motion).
 
-A safety tick (for example every minute) can be kept as a complement, in case a function fails to report its deadline.
+There is no safety tick: the engine wakes only on MQTT messages and reported deadlines. A function that fails to report its deadline is a bug that the test scenarios must catch.
 
 ### Sunrise and sunset
 
-Computed locally from the configured coordinates, using the `github.com/nathan-osman/go-sunrise` library. Often more relevant than a light sensor for detecting nightfall, and integrated into the same deadline mechanism.
+Computed locally from the coordinates set in environment variables, using the `github.com/nathan-osman/go-sunrise` library. Often more relevant than a light sensor for detecting nightfall, and integrated into the same deadline mechanism.
 
 ## 6. Engine main loop
 
@@ -269,7 +281,7 @@ An actuator that publishes its own state (the boiler relay on `zigbee2mqtt/relai
 
 ## 7. Complete annotated example
 
-The `domo.yaml` file provided with this documentation contains a complete configuration. Here is its logic.
+The `doc/example.yml` file provided with this documentation contains a complete configuration and its test scenarios. Here is its logic.
 
 ### Hardware
 
@@ -298,7 +310,7 @@ policies:
 - `demande_chauffage` uses `any(...)`: a single valve requesting heat is enough. Replacing it with `all(...)` would require every valve to request heat at the same time.
 - `presence_appart` uses `since_true_any` over the three sensors with a 30-minute threshold.
 - `min_on` and `min_off` set to 5 minutes protect the boiler against short cycling.
-- A frost-protection rule would be added at the top of the list to override every shutdown.
+- A frost-protection rule sits at the top of the list and overrides every shutdown: the boiler turns on when any valve's `local_temperature` is below 7 °C.
 
 ### Lamps 1, 2 and 4
 
@@ -322,6 +334,8 @@ Shared between switch B and a night light: at night (starting 20 minutes before 
 
 The `scenarios` section of the file describes situations with a simulated clock: initial state (`given`), events (`events`), expected results (`expect`), then changes over time (`then`). They cover in particular the 11 PM shutdown, the shutdown after 30 minutes of absence, the night light turning off and switch B's action.
 
+This example is verified only with simulated data: the scenarios above, and end-to-end runs against the development Mosquitto broker fed with simulated Zigbee2MQTT messages. It does not depend on any real installation.
+
 ## 8. Debugging tools
 
 ### Validation at startup
@@ -333,7 +347,7 @@ Unknown references, inconsistent types, expressions that fail to compile, output
 Shows, for an output, the evaluation of each policy and which one decides.
 
 ```
-$ domo explain chaudiere
+$ events2mqtt explain chaudiere
 chaudiere = OFF (current: OFF)
   [1] coupure-nocturne  plage_coupure        -> TRUE  <- decides
   [2] appartement-vide  not presence_appart  -> (not evaluated)
@@ -358,7 +372,7 @@ If switch B is turned off at night right after motion in the kitchen, lamp 3 sta
 
 ### Service restart
 
-As long as no sensor has reported motion, `since_true_any` is infinite: the boiler stays off after a restart until the first motion. Persisting the state of inputs and latches to disk avoids this (and also avoids resetting every switch to `off`).
+As long as no sensor has reported motion, `since_true_any` is infinite: the boiler stays off after a restart until the first motion. Persisting the state of inputs and latches to disk avoids this (and also avoids resetting every switch to `off`). The first version persists this state and restores it without any age limit: a restored value is the last known value, as if the service had never stopped.
 
 ### Motion sensor delay
 
@@ -366,21 +380,21 @@ Zigbee motion sensors switch `occupancy` back to `false` after their own delay, 
 
 ### Boiler safety
 
-If the service stops with the relay `ON`, the boiler heats indefinitely. Plan for periodic republication of the desired state with an expiry timeout on the relay side if the firmware supports it, or failing that, a watchdog script that cuts the relay when the service stops responding.
+If the service stops with the relay `ON`, the boiler heats indefinitely. Plan for periodic republication of the desired state with an expiry timeout on the relay side if the firmware supports it, or failing that, a watchdog script that cuts the relay when the service stops responding. This safeguard is not part of the first version and is accepted as a known risk.
 
 ## 10. Implementation notes
 
 ### Expression language
 
-`github.com/expr-lang/expr` or CEL (`github.com/google/cel-go`) in Go: typing, compilation at load time, custom functions. Time-based functions must be able to report their deadline back to the engine.
+`github.com/expr-lang/expr` in Go: typing, compilation at load time, custom functions. CEL (`github.com/google/cel-go`) was considered and set aside. Time-based functions must be able to report their deadline back to the engine.
 
 ### Injected clock
 
-Never call `time.Now()` inside functions: pass the time through a `Clock` interface. This is what makes test scenarios possible without waiting for real time.
+Never call `time.Now()` inside functions: pass the time through a `Clock` interface. This is what makes test scenarios possible without waiting for real time. The production binary uses the real clock; the end-to-end test is a Go integration test that runs the engine in-process with a forged clock against the development Mosquitto broker, so the binary needs no test-only clock option.
 
 ### Time zone
 
-Explicitly load `time.LoadLocation("Europe/Paris")`, otherwise a container configured in UTC would shift every time range. On the day of the switch to winter time, the 02:00-03:00 range occurs twice: avoid placing transitions there or define the behavior explicitly.
+Explicitly load the time zone set in an environment variable, for example `time.LoadLocation("Europe/Paris")`, otherwise a container configured in UTC would shift every time range. Durations are counted on absolute instants and are not affected by daylight saving time. Only the wall-clock bounds of `time_between` are: the 02:00-03:00 range does not exist in spring and occurs twice in autumn, so validation refuses a bound within it.
 
 ### Go timer
 
@@ -389,6 +403,25 @@ Since Go 1.23, `timer.Reset` is safe even if the timer expired without being rea
 ### Dependency graph
 
 Recomputing every output on each event is sufficient at the scale of a home and guarantees that `explain` stays consistent. A dependency graph (which output reads which input) would only be a later optimization, and a potential source of subtle bugs for a negligible gain.
+
+### Software settings and MQTT connection
+
+Every software setting (broker host, port, credentials and other runtime settings) comes from environment variables. The YAML file only describes the rules and never holds a secret. The variables share the `EVENTS2MQTT_` prefix:
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `EVENTS2MQTT_CONFIG` | Path to the YAML file or to the `conf.d/` directory | required |
+| `EVENTS2MQTT_STATE_FILE` | Path to the persisted state | required |
+| `EVENTS2MQTT_MQTT_HOST` | Broker host | required |
+| `EVENTS2MQTT_MQTT_PORT` | Broker port | `1883` |
+| `EVENTS2MQTT_MQTT_USERNAME` | Broker user | none |
+| `EVENTS2MQTT_MQTT_PASSWORD` | Broker password | none |
+| `EVENTS2MQTT_MQTT_CLIENT_ID` | MQTT client identifier | `events2mqtt` |
+| `EVENTS2MQTT_TIMEZONE` | IANA time zone name, such as `Europe/Paris` | required |
+| `EVENTS2MQTT_LATITUDE` | Latitude for sunrise and sunset | required if sun functions are used |
+| `EVENTS2MQTT_LONGITUDE` | Longitude for sunrise and sunset | required if sun functions are used |
+| `EVENTS2MQTT_DRY_RUN` | Compute and log decisions without publishing | `false` |
+| `EVENTS2MQTT_LOG_LEVEL` | `debug`, `info`, `warn` or `error` | `info` | The first version connects to the broker without TLS. When the connection drops, the engine reconnects automatically with backoff, subscribes again, then republishes the desired state of every output, since commands may have been lost during the outage.
 
 ### Alternative to YAML
 
