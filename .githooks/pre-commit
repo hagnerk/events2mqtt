@@ -11,3 +11,15 @@ if [ -n "$staged" ]; then
     echo "Unstage them with: git restore --staged <file>" >&2
     exit 1
 fi
+
+# Refuses a commit whose staged changes contain a secret (private key, API token, etc.).
+if ! command -v gitleaks >/dev/null 2>&1; then
+    echo "Commit refused: gitleaks is required to check staged changes for secrets." >&2
+    echo "It is installed in the claude dev container; elsewhere, see https://github.com/gitleaks/gitleaks#installing" >&2
+    exit 1
+fi
+if ! gitleaks git --pre-commit --staged --redact --no-banner --verbose --log-level warn; then
+    echo "Commit refused: gitleaks found secrets in the staged changes (see above)." >&2
+    echo "If a finding is a false positive, add its fingerprint to .gitleaksignore." >&2
+    exit 1
+fi

@@ -10,7 +10,9 @@ The `infra/dev/data/claude` and `infra/dev/data/ssh` directories hold Claude's c
 git config core.hooksPath .githooks
 ```
 
-These hooks only protect the clones where they are enabled, and `git push --no-verify` still bypasses them.
+The `pre-commit` hook also runs [Gitleaks](https://github.com/gitleaks/gitleaks) on the staged changes, which catches secrets wherever they are, such as a private key or an API token written in a configuration file. The commit is refused if a secret is found, and also if `gitleaks` is not installed, so that the check cannot be skipped silently. Gitleaks is installed in the `claude` container, but committing from the host requires installing it there too, for example with `brew install gitleaks` on macOS. If a finding turns out to be a false positive, its fingerprint, printed by the hook, can be added to a `.gitleaksignore` file at the root of the repository.
+
+These hooks only protect the clones where they are enabled, and `git commit --no-verify` or `git push --no-verify` still bypasses them.
 
 ### The containers
 
